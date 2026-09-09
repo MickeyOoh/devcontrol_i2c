@@ -30,7 +30,7 @@ defmodule CircuitsSim.Device.PCA9685 do
   @led_registers String.duplicate(<<0x00>>, 250)
 
   @initial_memory @mode1 <> @mode2 <> @sub_addrs <> @led_registers
-  @outdata List.duplicate([0,0], 16)
+  @outdata List.duplicate({0,0}, 16)
   @pwmdata List.duplicate(0,16)  
   defstruct holdreg: 0, data: @initial_memory, prescale: 0, outdata: @outdata, pwmdata: @pwmdata 
  
@@ -43,6 +43,7 @@ defmodule CircuitsSim.Device.PCA9685 do
   defimpl I2CDevice do
     @impl I2CDevice
     def read(state, count) do
+      #IO.puts("read: count=#{inspect(count)}")
       regno = Map.get(state, :holdreg)
       data = Map.get(state, :data)
       cond do
@@ -59,6 +60,7 @@ defmodule CircuitsSim.Device.PCA9685 do
 
     @impl I2CDevice
     def write(state, <<_regno::binary-size(1), setdata::binary>> = data) do
+      #IO.puts("write: data=#{inspect(data)}")
       regno = :binary.at(data, 0)   # register No 
       state = %{state | holdreg: regno}
       bindata = Map.get(state, :data)

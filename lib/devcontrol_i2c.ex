@@ -16,12 +16,14 @@ defmodule DevcontrolI2c do
   ```
 
   """
+  alias DevcontrolI2c.DevTable 
+
   use FsmDiagram
   @type bus_name() :: String.t()
 
-  @busadd_table  %{
-    0x40 => {DevcontrolI2c.PCA9685.Handle, []},
-  }
+  #@busadd_table  %{
+  #  0x40 => {DevcontrolI2c.PCA9685.Handle, []},
+  #}
   
   @spec start(bus_name()) :: {:ok, pid()}
   def start(bus_name) do
@@ -58,9 +60,9 @@ defmodule DevcontrolI2c do
 
   def start_device({bus_name, bus, addlist}) do
     Enum.each(addlist, fn add -> 
-        case Map.get(@busadd_table, add) do
-          {mod, _opts} -> activate_device(mod, {bus_name, add}, bus) 
-          nil -> nil
+        hdmod = DevTable.get_handler({bus_name, add})
+        if is_atom(hdmod) do
+          activate_device(hdmod, {bus_name, add}, bus)
         end
       end)
     moveto(:wait_req, [])
@@ -93,6 +95,7 @@ defmodule DevcontrolI2c do
       after 100 -> :timeout
     end
   end
+
   @spec soft_reset(Bus.t()) :: none()
   defp soft_reset(bus) do
     Circuits.I2C.write(bus, 0x00, <<0x06>>)

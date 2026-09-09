@@ -31,18 +31,13 @@ defmodule DevcontrolI2c.PCA9685tbl do
   @spec get_devtable(d_name :: fsm_id()) :: list()
   def get_devtable(d_name) do
     {_dev_name, _handler, fnctable} = DevTable.get_table(d_name)
-    fnctable.()     
+    fnctable.()
   end
 
   @spec get_chtable(d_name :: fsm_id(), integer()) :: tuple()
   def get_chtable(d_name, ch_no) do
     table = get_devtable(d_name)
-    elem(table, ch_no)
+    Enum.at(table, ch_no)
   end
 
-  @spec get_handler(d_name :: fsm_id()) :: fun()
-  def get_handler(d_name) do
-    {_dev_name, handler, _fnctable} = DevTable.get_table(d_name)
-    handler
-  end
 end

@@ -1,29 +1,16 @@
 defmodule DevcontrolI2c.DevTable do
 
-
-  #@tbl_pca9685_1 [
-  #  #ledno => {type, default, name}
-  #    {:duty, 0, "frontleft_forward"},
-  #    {:duty, 0, "frontleft_backward"},
-  #    {:duty, 0, "rearleft_backward"},
-  #    {:duty, 0, "rearleft_forward"},
-  #    {:duty, 0, "rearright_forward"},
-  #    {:duty, 0, "rearright_backward"},
-  #    {:duty, 0, "frontright_forward"},
-  #    {:duty, 0, "frontright_backword"},
-  #    {:servo, 50, "swing left right"},
-  #    {:servo, 50, "swing up down"},
-  #    {:none, 0, ""},
-  #    {:none, 0, ""},
-  #    {:none, 0, ""},
-  #    {:none, 0, ""},
-  #    {:none, 0, ""},
-  #    {:none, 0, ""},
-  #  ]
-  #@tbl_pca9685_2 []
-
-  #def tbl_pca9685_1(), do: @tbl_pca9685_1
-  #def tbl_pca9685_2(), do: @tbl_pca9685_2
+  @type address() :: integer()
+  @type fsm_id() :: {String.t(), address()} | String.t()
+  @type dev_name() :: fsm_id()
+  #
+  #@drv_i2c_1 [ # {dev_name, handler, dev_table}
+  #  {{"i2c-1", 0x40}, DevcontrolI2c.PCA9685.Handle, &DevcontrolI2c.PCA9685tbl.table1/0},
+  #]
+  #@drv_i2c_2 [ # {dev_name, handler, dev_table}
+  #  {{"i2c-2", 0x40}, DevcontrolI2c.PCA9685.Handle, &DevcontrolI2c.PCA9685tbl.table2/0},
+  #]
+  #@drivers [ {"i2c-1", @drv_i2c_1}, {"i2c-2", @drv_i2c_2} ]
 
   @tbl_devices [
     # {dev_name, handler, dev_table}
@@ -32,6 +19,7 @@ defmodule DevcontrolI2c.DevTable do
   ]
   def tbl_devices(), do: @tbl_devices
 
+  @spec get_table(dev_name()) :: {dev_name, fun(), fun()} | :error 
   def get_table(d_name), do: get_table(@tbl_devices, d_name)
   def get_table([], _d_name), do: :error
   def get_table([table | t], d_name) do
@@ -43,4 +31,12 @@ defmodule DevcontrolI2c.DevTable do
     end
   end
 
+  @spec get_handler(d_name :: fsm_id()) :: module() | nil
+  def get_handler(d_name) do
+    return = get_table(d_name)
+    case return do
+      {_d_name, handler, _fnctable} -> handler
+      _ -> nil 
+    end
+  end
 end
