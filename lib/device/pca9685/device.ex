@@ -109,10 +109,10 @@ defmodule DevcontrolI2c.PCA9685.Device do
   @spec set_ledpat(counter(), counter()) :: bitstring()   # <<ontime::16, offtime::16>>
   def set_ledpat(ontime, offtime) when is_1000(ontime) and is_1000(offtime) do
     <<_::3, high::5, low::8>> = <<ontime::16>>
-    on_bin = <<low::8, 0::3, high::5>> 
+    on_bit16 = <<low::8, 0::3, high::5>> 
     <<_::3, high::5, low::8>> = <<offtime::16>>
-    off_bin = <<low::8, 0::3, high::5>> 
-    on_bin <> off_bin
+    off_bit16 = <<low::8, 0::3, high::5>> 
+    on_bit16 <> off_bit16
   end
   def set_ledpat(_ontime, _offtime), do: set_ledpat(0, 0x1000) 
 
@@ -148,8 +148,8 @@ defmodule DevcontrolI2c.PCA9685.Device do
 
   """
   @spec parse_led(bitstring()) :: {counter(), counter()}  # {ontime, offtime}
-  def parse_led(bin) when is_bitstring(bin) do
-    <<on_low::8, _::3, on_high::5, off_low::8, _::3, off_high::5>> = bin
+  def parse_led(bit32) when is_bitstring(bit32) do
+    <<on_low::8, _::3, on_high::5, off_low::8, _::3, off_high::5>> = bit32
     <<ontime::16, offtime::16>> = <<0::3, on_high::5, on_low::8, 0::3, off_high::5, off_low::8>>
     {ontime, offtime}
   end

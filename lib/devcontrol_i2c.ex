@@ -18,12 +18,16 @@ defmodule DevcontrolI2c do
   """
   alias DevcontrolI2c.DevTable 
 
+
   use FsmDiagram
   @type bus_name() :: String.t()
 
   #@busadd_table  %{
   #  0x40 => {DevcontrolI2c.PCA9685.Handle, []},
   #}
+  
+  #def table1_adds(), do: DevTable.tbl1_addresses()
+  def table2_adds(), do: DevTable.tbl2_addresses()
   
   @spec start(bus_name()) :: {:ok, pid()}
   def start(bus_name) do
@@ -37,11 +41,17 @@ defmodule DevcontrolI2c do
 
   def bus_open({bus_name}) do
     Logger.debug("bus_open(#{bus_name})")
-    ret  = Circuits.I2C.open(bus_name)
-    case ret do
-      {:ok, bus} -> moveto(:get_addlist, {bus_name, bus})
-      {:error, _} ->  Process.sleep(1000)
-                      Circuits.I2C.open({bus_name})
+    {result, bus}  = Circuits.I2C.open(bus_name)
+    if result == :ok do
+      addlist = DevTable.get_table(bus_name)
+      if addlist == [] or addlist == nil do
+        moveto(:get_addlist, {bus_name, bus})
+      else
+        moveto(:start_device, {bus_name, bus, addlist})
+      end
+    else
+      Process.sleep(1000) 
+      bus_open(bus_name)
     end
   end
 
@@ -60,7 +70,7 @@ defmodule DevcontrolI2c do
 
   def start_device({bus_name, bus, addlist}) do
     Enum.each(addlist, fn add -> 
-        hdmod = DevTable.get_handler({bus_name, add})
+        hdmod = DevTable.get_module({bus_name, add})
         if is_atom(hdmod) do
           activate_device(hdmod, {bus_name, add}, bus)
         end
@@ -99,7 +109,7 @@ defmodule DevcontrolI2c do
   @spec soft_reset(Bus.t()) :: none()
   defp soft_reset(bus) do
     Circuits.I2C.write(bus, 0x00, <<0x06>>)
-    Process.sleep(200)
+    Process.sleep(100)
   end
 
 end

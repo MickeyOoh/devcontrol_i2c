@@ -1,4 +1,4 @@
-defmodule DevcontrolI2c.PCA9685Ope do
+defmodule DevcontrolI2c.PCA9685Sim do
   @moduledoc """
   """
 
