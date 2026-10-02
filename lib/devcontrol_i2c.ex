@@ -9,6 +9,7 @@ defmodule DevcontrolI2c do
   stateDiagram-v2
   [*] --> bus_open()
   bus_open() --> get_addlist()
+  bus_open() --> start_device() : exists addressses
   get_addlist() --> start_device()
   start_device() --> wait_req()
   wait_req() --> wait_unlock() : lock
@@ -16,19 +17,12 @@ defmodule DevcontrolI2c do
   ```
 
   """
+  use FsmDiagram
+
   alias DevcontrolI2c.DevTable 
 
-
-  use FsmDiagram
   @type bus_name() :: String.t()
 
-  #@busadd_table  %{
-  #  0x40 => {DevcontrolI2c.PCA9685.Handle, []},
-  #}
-  
-  #def table1_adds(), do: DevTable.tbl1_addresses()
-  def table2_adds(), do: DevTable.tbl2_addresses()
-  
   @spec start(bus_name()) :: {:ok, pid()}
   def start(bus_name) do
     {:ok, _pid} = fsm_start(bus_name, :bus_open, {bus_name})
@@ -39,11 +33,15 @@ defmodule DevcontrolI2c do
     update_fnc(func, argv)
   end
 
+  @doc false
+  # i2c bus open by bus_name 
+  #
+  @spec bus_open({bus_name()}) :: none()
   def bus_open({bus_name}) do
-    Logger.debug("bus_open(#{bus_name})")
+    #Logger.debug("bus_open(#{bus_name})")
     {result, bus}  = Circuits.I2C.open(bus_name)
     if result == :ok do
-      addlist = DevTable.get_table(bus_name)
+      addlist = DevTable.get_bussadds(bus_name)
       if addlist == [] or addlist == nil do
         moveto(:get_addlist, {bus_name, bus})
       else
@@ -54,7 +52,9 @@ defmodule DevcontrolI2c do
       bus_open(bus_name)
     end
   end
-
+  @doc false
+  # search addresses on i2c bus
+  @spec get_addlist({bus_name(), Bus.t()}) :: none()
   def get_addlist({bus_name, bus} = argv) do
     soft_reset(bus)
     Process.sleep(200)      # wait 200ms of reset devices
@@ -63,49 +63,65 @@ defmodule DevcontrolI2c do
       Process.sleep(3000)
       get_addlist(argv)
     else
-      argv = {bus_name, bus, addlist}
-      moveto(:start_device, argv)
+      moveto(:start_device, {bus_name, bus, addlist})
     end
   end
 
+  @doc false
+  # activate each devices as  
+  @spec start_device({bus_name(), Bus.t(), list()}) :: none()
   def start_device({bus_name, bus, addlist}) do
+    put_vars(addlist)
     Enum.each(addlist, fn add -> 
         hdmod = DevTable.get_module({bus_name, add})
-        if is_atom(hdmod) do
+        if is_atom(hdmod) and not is_nil(hdmod) do
           activate_device(hdmod, {bus_name, add}, bus)
         end
       end)
-    moveto(:wait_req, [])
+    moveto(:wait_req, {bus_name, bus}) 
   end 
 
-  def wait_req(_argv) do
+  @doc false
+  # wait_req() - 
+  #   wait for msg and do with each msg
+  #   `{:lock, from. msg}` 
+  @spec wait_req({bus_name(), Bus.t()}) :: none()
+  def wait_req({bus_name, bus}) do
     receive do
-      {:lock, from, msg} -> 
-        #Logger.debug("lock #{inspect(from)}")
-          send(from, {:lock, self(), msg})
-          moveto(:wait_unlock, from)
+      {:lock, from, msg, arg} -> 
+          send(from, {:lock, self(), msg, arg})
+          moveto(:wait_unlock, {bus_name, bus, from})
     end
   end
 
-  def wait_unlock(waitpid) do
+  @doc false
+  #exclusive control for i2c bus by `lock` msg. release bus
+  #by `unlock` msg and return back to wairt_req()
+  @spec wait_unlock({bus_name(), Bus.t(), pid()}) :: none()
+  def wait_unlock({bus_name, bus, waitpid}) do
     receive do
-      {:unlock, ^waitpid, msg} -> 
-        #Logger.debug("unlock: #{inspect(waitpid)}")
-          send(waitpid, {:unlock, self(), msg})
-          moveto(:wait_req, waitpid)
+      {:unlock, ^waitpid, msg1, msg2} -> 
+          send(waitpid, {:unlock, self(), msg1, msg2})
+          moveto(:wait_req, {bus_name, bus})
     end
   end
-
+  @doc false
+  # start each device by `start({bus_name, address}, bus)` 
+  # then wait until each device initialization ends by receiving :init_end msg.
   defp activate_device(mod, {bus_name, add}, bus) do
-    #MemPool.cre_mpf({ {{bus_name, add}, :device}, bus, %{}}) 
-    mod.start({bus_name, add}, bus)
+    mod.start({bus_name, add}, bus)   # start_link() is not supported
     receive do
-      {:init_end, _from, state} ->
+      {:init_end, _from, ^add, state} ->
           Logger.debug("#{bus_name} #{add} state:#{state} initialized")
       after 100 -> :timeout
     end
   end
-
+  @doc false
+  # General call address commands
+  # 0x06 - soft_reset() Reset/Write Programming Address
+  # 0x04 - Write Programming Address
+  # 0x00 - No Operation
+  # 0x02 - Device ID
   @spec soft_reset(Bus.t()) :: none()
   defp soft_reset(bus) do
     Circuits.I2C.write(bus, 0x00, <<0x06>>)

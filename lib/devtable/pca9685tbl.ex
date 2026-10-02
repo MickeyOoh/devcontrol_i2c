@@ -23,6 +23,6 @@ defmodule DevcontrolI2c.PCA9685tbl do
 #
 #  def table1(), do: @tbl_pca9685_1
 #  def table2(), do: @tbl_pca9685_2
-  def table1(), do: []
-  def table2(), do: [] 
+  #def table1(), do: []
+  #def table2(), do: [] 
 end

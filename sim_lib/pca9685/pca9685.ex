@@ -26,13 +26,13 @@ defmodule CircuitsSim.Device.PCA9685 do
   #defstruct holdreg: 0, data: <<0::binary-size(256)>>
   @mode1 <<0x11>>   # default value
   @mode2 <<0x04>>   # default value
-  @sub_addrs <<0xe2, 0xe4, 0xe8, 0xe0>>
-  @led_registers String.duplicate(<<0x00>>, 250)
-
-  @initial_memory @mode1 <> @mode2 <> @sub_addrs <> @led_registers
+  @sub_addrs <<0xe2, 0xe4, 0xe8, 0xe0>>   # reg 2 - 5
+  @led_registers String.duplicate(<<0x00>>, 254 - 5)   # reg 6 - 254 --> 254 - 5
+  @prescale <<30>>      # default 200Hz: 25_000_000/(4096 * 200) - 1
+  @initial_memory @mode1 <> @mode2 <> @sub_addrs <> @led_registers <> @prescale
   @outdata List.duplicate({0,0}, 16)
   @pwmdata List.duplicate(0,16)  
-  defstruct holdreg: 0, data: @initial_memory, prescale: 0, outdata: @outdata, pwmdata: @pwmdata 
+  defstruct holdreg: 0, data: @initial_memory, prescale: 30, outdata: @outdata, pwmdata: @pwmdata  
  
   @spec new() :: %__MODULE__{}
   def new() do
@@ -43,7 +43,6 @@ defmodule CircuitsSim.Device.PCA9685 do
   defimpl I2CDevice do
     @impl I2CDevice
     def read(state, count) do
-      #IO.puts("read: count=#{inspect(count)}")
       regno = Map.get(state, :holdreg)
       data = Map.get(state, :data)
       cond do
@@ -60,7 +59,6 @@ defmodule CircuitsSim.Device.PCA9685 do
 
     @impl I2CDevice
     def write(state, <<_regno::binary-size(1), setdata::binary>> = data) do
-      #IO.puts("write: data=#{inspect(data)}")
       regno = :binary.at(data, 0)   # register No 
       state = %{state | holdreg: regno}
       bindata = Map.get(state, :data)
@@ -85,7 +83,7 @@ defmodule CircuitsSim.Device.PCA9685 do
         254 <= regno and regno + num <= 256 ->
           <<pre::binary-size(regno), _o::binary-size(num), rest::binary>> = bindata
           tmp = <<pre::binary-size(regno), setdata::binary-size(num), rest::binary>>
-          %{state | data: tmp}
+          %{state | data: tmp, prescale: setdata}
         true ->
           state
       end

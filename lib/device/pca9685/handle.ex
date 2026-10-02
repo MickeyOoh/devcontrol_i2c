@@ -18,16 +18,16 @@ defmodule DevcontrolI2c.PCA9685.Handle do
   use FsmDiagram
   require Logger
   alias DevcontrolI2c.PCA9685.Device
-  alias DevcontrolI2c.PCA9685tbl
+  #alias DevcontrolI2c.PCA9685tbl
 
   @type bus_name() :: String.t()
   @type address() :: integer()
 	@type percent() :: non_neg_integer()	# 0-100%
 	@type counter() :: non_neg_integer()	# 0-4095, 4096 pulses
-	@type channel() :: non_neg_integer()	# 0-15 ledn
+	@type led_no() :: non_neg_integer()	# 0-15 ledn
 
-  def table1(), do: PCA9685tbl.table1()
-  def table2(), do: PCA9685tbl.table2()
+  #def table1(), do: PCA9685tbl.table1()
+  #def table2(), do: PCA9685tbl.table2()
   
   @spec start({bus_name(), address()}, Bus.t()) :: {:ok, pid}
   def start({bus_name, address} = fsm_id,  bus) do
@@ -74,25 +74,37 @@ defmodule DevcontrolI2c.PCA9685.Handle do
     move_to(:restart, argv)
   end 
 
-  def restart({{_bus_name, address}, bus} = argv) do
+  def restart({{bus_name, address}, bus} = argv) do
     dt_pat = Device.mode1_restart()
     data = Device.set_reg(:regmode1, dt_pat)
     Circuits.I2C.write(bus, address, data)
+
+    pid = FsmDiagram.get_fsmpid(bus_name)
+    if is_pid(pid) do
+      send(pid, {:init_end, self(), address, :restart})
+    end
     Process.sleep(10)
     move_to(:wait_req, argv)
   end
   
   @req_apis """
-  interface of message to request this module
-  send(pid, {eve, {from, ev_reply}, ch_no, outdata | num}) 
-  pid: FsmDiagram.get_fsmpid({bus_name, 0x40})
-  from: self(), ev_reply: eve for reply 
-  ch_no: 0-15 led number
-  eve          data
-  #:set_reg    regpattern
-  :ledout      percent(0-100%)
-  :multi_led   [percent, ...]
-  #:read_reg    count
+  API to request this module
+  
+  send(pid, {eve, from, ledn, data}) 
+  ----
+  pid:  FsmDiagram.get_fsmpid({bus_name, 0x40})
+  from: self()  
+  ledn: 0-15 led number
+
+  | eve          |     data                |
+  |--------------|-------------------------|
+  | :servo_out   | percent or              |
+  |              |   [percent, ...]        |
+  | :duty_out    | percent or              |
+  |              | [percent, ...]          |
+  | :set_counter | {ontime, offtime} or    |
+  |              | [{ontime, offtime},...] |
+  | :get_counter | number                  | 
   """
   def api_format() do
     @req_apis
@@ -101,69 +113,75 @@ defmodule DevcontrolI2c.PCA9685.Handle do
   @spec wait_req({{bus_name(), integer()}, Bus.t()}) :: none()
   def wait_req({ {_bus_name, address} = fsm_id, bus}) do
     receive do
-      {eve, from, ch_no, data} -> 
+      {eve, from, ledn, data} -> 
 				case eve do
-          :duty_out ->      # {:duty_out, {_from, _ev_reply}, ch_no, percent | [percent, ...] }
+          :duty_out ->      # {:duty_out, {_from, _ev_reply}, ledn, percent | [percent, ...] }
             percents = data
-            bindata = percentto_bin(ch_no, percents, &Device.percto_duty/2) 
-						regno = 6 + ch_no * 4
+            bindata = percentto_bin(ledn, percents, &Device.percto_duty/2) 
+						regno = 6 + ledn * 4
       	    Circuits.I2C.write(bus, address, <<regno::8>> <> bindata)
             wait_req({fsm_id, bus})
-          :servo_out ->      # {:sarvo_out, {_from, _ev_reply}, ch_no, percent | [percent, ...] }
+          :servo_out ->      # {:sarvo_out, {_from, _ev_reply}, ledn, percent | [percent, ...] }
             percents = data
-            bindata = percentto_bin(ch_no, percents, &Device.percto_servo/2) 
-						regno = 6 + ch_no * 4
+            bindata = percentto_bin(ledn, percents, &Device.percto_servo/2) 
+						regno = 6 + ledn * 4
       	    Circuits.I2C.write(bus, address, <<regno::8>> <> bindata)
-            wait_req({fsm_id, bus})
-					:set_counter ->
+            wait_req({fsm_id, bus})  
+          :set_counter ->
             counters = data
 						bindata = ledoutto_bin(counters)
-						regno = 6 + ch_no * 4
+						regno = 6 + ledn * 4
       	    Circuits.I2C.write(bus, address, <<regno::8>> <> bindata)
-            wait_req({fsm_id, bus})
+            wait_req({fsm_id, bus})  
           :get_counter ->
-            ch_num = if data < 1, do: 1, else: data
-            counters = read_ledout({fsm_id, bus}, ch_no, ch_num)
+            counters = read_ledout({fsm_id, bus}, ledn, data)
             if length(counters) == 1 do
               [counter] = counters
-              send(from, {:reply, self(), ch_no, counter}) 
+              send(from, {:reply, self(), ledn, counter}) 
             else 
-              send(from, {:reply, self(), ch_no, counters})
+              send(from, {:reply, self(), ledn, counters})
             end
             wait_req({fsm_id, bus})
-      	  _ -> Logger.warning("event code error #{inspect eve}")
+      	  _ -> Logger.warning("#{inspect get_elm(:func)} received unknown event #{inspect eve}")
             wait_req({fsm_id, bus})
       	end
-			msg -> Logger.warning("illegal data received #{inspect msg}")
+			msg -> Logger.warning("#{inspect get_elm(:func)} received format error #{inspect msg}")
             wait_req({fsm_id, bus})
-
     end
   end
 
-  @spec percentto_bin(channel(), percent(), fun()) :: bitstring()
-
-  def percentto_bin(ch_no, percents, fnc_convert) when is_list(percents) do
-    valid = Enum.all?(percents, fn p -> is_integer(p) and 0 <= p and p <= 100 end)
-    if valid == true do
-      len = length(percents)
-      Enum.to_list(ch_no..(ch_no + len - 1))    #[ch, ch + 1, ch +2,...]
-      |> Enum.zip( percents)            #[{ch0, p0}, {ch1, p1},...]
-      |> Enum.into(  [], fn {ch, p} -> fnc_convert.(ch, p) end) # [{on,off},...] 
-      |> ledoutto_bin( )                # <<chbin0::32, chbin1::32, ...>>
-    else
-      <<>>
-    end
+  @spec percentto_bin(led_no(), percent(), fun()) :: bitstring()
+  def percentto_bin(ledn, percents, fnc_convert) when is_list(percents) do
+    len = length(percents)
+    Enum.to_list(ledn..(ledn + len - 1))    #[ledn, ledn + 1, ledn +2,...]
+    |> Enum.zip( percents)            #[{ledn, p0}, {ledn + 1, p1},...]
+    |> Enum.into( [], fn {n, p} -> fnc_convert.(n, p) end) # [{on,off},...] 
+    |> ledoutto_bin( )                # <<ledn0bin::32, ledn1bin1::32, ...>>
   end
-  def percentto_bin(ch_no, percent, fnc_convert), do: percentto_bin(ch_no, [percent], fnc_convert) 
+  def percentto_bin(ledn, percent, fnc_convert), do: percentto_bin(ledn, [percent], fnc_convert) 
+  
+  @doc """
+  converts counters to bitstring 
+     counters :: {ontime, offtime} | [{ontime, offtime}, ...]
 
-  @spec ledoutto_bin({counter(), counter()} | [{counter(), counter()},...])
+  # Example
+
+     iex> ledoutto_bin({0x0123, 0x0321})
+     <<35, 1, 33, 3>>
+     iex> ledoutto_bin([{0x100, 0x200}, {0x300, 0x400}, {0x500, 0x600}])
+     <<0, 1, 0, 2, 0, 3, 0, 4, 0, 5, 0, 6>>
+     iex> ledoutto_bin({0x0123})
+     <<>>
+
+  """ 
+  @spec ledoutto_bin({counter(), counter()} | [{counter(), counter()}, ...])  
                                 :: bitstring()
-	defp ledoutto_bin({_ontime, _offtime} = counter), do: ledoutto_bin([counter])
-	defp ledoutto_bin(counters) when is_list(counters) do
+	def ledoutto_bin({_ontime, _offtime} = counter), do: ledoutto_bin([counter])
+	def ledoutto_bin(counters) when is_list(counters) do
 		check = Enum.all?(counters, 
 					    fn {on, off} when is_integer(on) and is_integer(off) -> true
 						 _				-> false
-				end)
+				    end)
 		if check == true do
 			Enum.reduce(counters, <<>>, 
 										fn {ontime, offtime}, acc -> 
@@ -173,55 +191,55 @@ defmodule DevcontrolI2c.PCA9685.Handle do
 			<<>>
 		end
 	end
-	defp ledoutto_bin(_), do: <<>>
+	def ledoutto_bin(_), do: <<>>
 
   #defp loc_mtx() do
   #  {:ok, {bus_name, _}} = self_fsmid() 
   #  pid = get_fsmpid(bus_name)    # parent bus name
-  #  send(pid, {:lock, self(), "locking"})
+  #  send(pid, {:lock, self(), :loc_mtx, "locking"})
   #  receive do
-  #    {:lock, ^pid, _msg} -> :ok
+  #    {:lock, ^pid, _msg1, _msg2} -> :ok
   #  end
   #end
 
   #defp unl_mtx() do
   #  {:ok, {bus_name, _}} = self_fsmid() 
   #  pid = get_fsmpid(bus_name)    # parent bus name
-  #  send(pid, {:unlock, self(), "unlocking"})
+  #  send(pid, {:unlock, self(), :unl_mtx, "unlocking"})
   #  receive do
-  #    {:unlock, ^pid, _msg} -> :ok
+  #    {:unlock, ^pid, _msg1, _msg2} -> :ok
   #  end
   #end
   #
-  @spec read_reg(atom()) :: keyword()
-  defp read_reg(regname) do
-    {regno, num, format, _msg} = Device.get_reginfo(regname)
-    w_dt = <<regno::8>>
-    {{_bus_name, address}, bus} = get_elm(:vars)
-    {:ok, data} = Circuits.I2C.write_read(bus, address, w_dt, num)
-    Device.parse(data, format)
-  end
+  #@spec read_reg(atom()) :: keyword()
+  #defp read_reg(regname) do
+  #  {regno, num, format, _msg} = Device.get_reginfo(regname)
+  #  w_dt = <<regno::8>>
+  #  {{_bus_name, address}, bus} = get_elm(:vars)
+  #  {:ok, data} = Circuits.I2C.write_read(bus, address, w_dt, num)
+  #  Device.parse(data, format)
+  #end
+	#
+  #@spec read_rawreg(integer(), integer()) :: bitstring()
+  #defp read_rawreg(regno, num) do
+  #  w_dt = <<regno::8>>
+  #  {{_bus_name, address}, bus} = get_elm(:vars)
+  #  {:ok, data} = Circuits.I2C.write_read(bus, address, w_dt, num)
+	#	data
+  #end
 	
-  @spec read_rawreg(integer(), integer()) :: bitstring()
-  defp read_rawreg(regno, num) do
-    w_dt = <<regno::8>>
-    {{_bus_name, address}, bus} = get_elm(:vars)
-    {:ok, data} = Circuits.I2C.write_read(bus, address, w_dt, num)
-		data
-  end
-	
-  @spec read_ledout({{bus_name(), address()}, Bus.t()}, channel(), integer()) 
+  @spec read_ledout({{bus_name(), address()}, Bus.t()}, led_no(), integer()) 
                                   :: [{counter(), counter()}, ...]
-  defp read_ledout({{_bus_name, address}, bus}, ch_no, ch_num) do
-    ch_num = case ch_num do
+  defp read_ledout({{_bus_name, address}, bus}, ledn, led_num) do
+    led_num = case led_num do
                n when n < 1 -> 1
-               n when n > 16 - ch_no -> 16 - ch_no
+               n when n > 16 - ledn -> 16 - ledn
                n -> n
              end
-		regno = 6 + ch_no * 4
-    regnum = ch_num * 4 
+   	regno = 6 + ledn * 4
+    regnum = led_num * 4 
     {:ok, bindata} = Circuits.I2C.write_read(bus, address, <<regno::8>>, regnum)
-    Enum.to_list(0..(ch_num - 1))     # [0, 1, 2, 3,..] 
+    Enum.to_list(0..(led_num - 1))     # [0, 1, 2, 3,..] 
     |> Enum.map( fn n -> n * 4 end)   # [0, 4, 8, 12,..]
     |> Enum.map( fn loc -> binary_part(bindata, loc, 4) end)  # [<<bin::32>>,...] 
     |> Enum.map( fn bit32 -> Device.parse_led(bit32) end)   #[{ontime, offtime},...]

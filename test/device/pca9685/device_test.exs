@@ -17,4 +17,27 @@ defmodule DevcontrolI2c.PCA9685.DeviceTest do
     assert( prescale == Device.prescale_data() )
   end
 
+  test "set_ledpat validity check" do
+    assert(Device.set_ledpat(0, 0) == <<0, 0, 0, 16>>)
+    assert(Device.set_ledpat(2047, -20) == <<255, 7, 0, 0>>)
+    assert(Device.set_ledpat(-1, 2047) == <<0, 0, 255, 7>>)
+    assert(Device.set_ledpat(2047, 0x1001) == <<0, 0, 0, 16>>)
+    assert(Device.set_ledpat(0x3000, 2047) == <<0, 16, 0, 0>>)
+    assert(Device.set_ledpat(0, 256) == <<0, 0, 0, 1>>)
+  end
+
+  test "get_reginfo() check" do
+    assert_raise(ArgumentError, fn -> Device.get_reginfo(:mode1) end)
+    reg_map = Device.get_regallinfo()
+    regmap_values = Device.get_regallinfo(:values)
+    assert(Map.values(reg_map) == regmap_values)
+    regmap_keys = Device.get_regallinfo(:keys)
+    assert(Map.keys(reg_map) == regmap_keys)
+    Enum.with_index(regmap_keys, 
+          fn key, index ->
+            assert(Device.get_reginfo(key) == Enum.at(regmap_values, index))     
+          end
+    )
+  end
+
 end
